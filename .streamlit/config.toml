@@ -1,0 +1,8 @@
+# Simple built-in theme; no custom CSS or extra UI packages.
+[theme]
+base = "light"
+primaryColor = "#475569"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor = "#222222"
+font = "sans serif"
