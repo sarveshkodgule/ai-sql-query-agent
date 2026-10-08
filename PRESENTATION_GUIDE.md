@@ -53,15 +53,16 @@ app.py for routes, database.py for MySQL work, and query_generator.py for the AI
 
 The application uses the real database selected in its local settings. Automated tests
 use mocked services separately so they can run without an API key. The main limitations
-are AI mistakes, API availability, a restricted SQL subset, and support for one MySQL
-database at a time. Future work could add relationship-aware prompts and more database types.”
+are AI mistakes, API availability, a restricted SQL subset, and support for databases
+on one MySQL server. Multiple databases can be selected together. Future work could add
+relationship-aware prompts and more database types.”
 
 ## Live demonstration checklist
 
 1. Before presenting, run `check_database.py` and correct any connection errors.
 2. Confirm your AI key/model works with one small question. Do not display the key.
 3. Start FastAPI and Streamlit in separate terminals using the README commands.
-4. Click Test database connection, then Load tables and columns.
+4. Click Test database connection, Load databases, select the databases you want, then Load tables and columns.
 5. Explain one real table and two or three columns from your database.
 6. Run a manual SELECT with LIMIT 5 to show real database access independently of AI.
 7. Ask one simple English question using those actual column names.
@@ -151,7 +152,7 @@ The saved settings can connect, a small read-only query works, and metadata can 
 at that moment. It does not prove AI accuracy or permission to read every table.
 
 **What are the limitations?**
-One configured MySQL database; no public-user authentication; no explicit foreign-key
+One MySQL server (with multiple selectable databases); no public-user authentication; no explicit foreign-key
 metadata; restricted SQL functions; API quota/network dependence; AI mistakes; and a
 200-row display cap. Large schemas may also exceed practical AI context limits.
 

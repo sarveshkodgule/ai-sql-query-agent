@@ -38,7 +38,7 @@ AI_MODEL=gemini-2.5-flash
 | `MYSQL_DATABASE` | Existing database whose tables you want to query |
 | `MYSQL_USER` | MySQL account allowed to read those tables |
 | `MYSQL_PASSWORD` | That MySQL account's password, not your Windows password |
-| `AI_PROVIDER` | `gemini` or `openai` |
+| `AI_PROVIDER` | `gemini`, `groq`, or `openai` |
 | `GEMINI_API_KEY` | Key used only when Gemini generates SQL |
 | `AI_MODEL` | Model requested from the selected provider |
 
@@ -105,6 +105,12 @@ In terminal 2:
 Open http://localhost:8501. Click **Test database connection**, then **Load tables and columns**.
 The sidebar should show your database and its real tables.
 
+For multiple databases, click **Load databases** and choose them under **Select databases**.
+Then load tables and columns. The account must have SELECT access to the relevant tables
+in every database used. System databases are excluded. All selections share the same
+MySQL server connection settings. Use `database.table` names for multi-database SQL.
+Selecting many large databases may exceed the AI schema size limit; choose fewer if prompted.
+
 First test a SQL statement that does not require AI:
 
 ```sql
@@ -126,7 +132,7 @@ guarantee a particular order. Data may also change between two executions.
 
 ## 6. Understand what goes to the AI
 
-The selected provider receives your question and the configured database's visible
+The selected provider receives your question and the selected databases' visible
 table names, column names, and data types. Existing code does not send result rows
 or database passwords to the AI. Any sensitive data you type into the question is
 part of the question sent to the provider. Use a database whose metadata you are allowed to share.

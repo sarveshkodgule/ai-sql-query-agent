@@ -4,19 +4,23 @@ from pathlib import Path
 import mysql.connector
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer.scope import traverse_scope
 from dotenv import load_dotenv
 
 # Read local settings once when the backend starts. Never print the password.
 load_dotenv(Path(__file__).with_name('.env'))
 
 
-def connect():
+SYSTEM_DATABASES = {'mysql', 'information_schema', 'performance_schema', 'sys'}
+
+
+def connect(database=None, server_only=False):
     """Open the real database named in .env; no sample data is loaded here."""
     return mysql.connector.connect(
         host=os.getenv('MYSQL_HOST', os.getenv('MY_HOST', 'localhost')),
         user=os.getenv('MYSQL_USER', 'sql_reader'),
         password=os.getenv('MYSQL_PASSWORD', ''),
-        database=os.getenv('MYSQL_DATABASE', 'sql_mini_project'),
+        database=None if server_only else (database or os.getenv('MYSQL_DATABASE', 'sql_mini_project')),
         port=int(os.getenv('MYSQL_PORT', '3306')), connection_timeout=5,
     )
 
@@ -48,23 +52,46 @@ def check_connection():
             'table_count': len(schema['tables'])}
 
 
-def get_schema():
-    """Ask MySQL for current table names, column names, and types."""
-    connection = connect()
+def list_databases():
+    """List databases visible to this MySQL account, excluding system schemas."""
+    connection = connect(server_only=True)
     try:
         cursor = connection.cursor()
-        cursor.execute('SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE '
-                       'FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() '
-                       'ORDER BY TABLE_NAME, ORDINAL_POSITION')
-        tables = {}  # Group columns under the table they belong to.
-        for table, column, data_type in cursor.fetchall():
-            tables.setdefault(table, []).append({'name': column, 'type': data_type})
-        return {'database': connection.database, 'tables': tables}
+        cursor.execute('SHOW DATABASES')
+        return sorted(row[0] for row in cursor.fetchall() if row[0].lower() not in SYSTEM_DATABASES)
     finally:
         connection.close()
 
 
-def validate_sql(sql):
+def selected_databases(databases=None):
+    names = list(dict.fromkeys(databases)) if databases is not None else [
+        os.getenv('MYSQL_DATABASE', 'sql_mini_project')]
+    if not names or any(not name.strip() or name.lower() in SYSTEM_DATABASES for name in names):
+        raise ValueError('Select at least one non-system database.')
+    if databases is not None and not set(names).issubset(list_databases()):
+        raise ValueError('A selected database is unavailable to this MySQL account. Reload the list.')
+    return names
+
+
+def get_schema(databases=None):
+    """Ask MySQL for current table names, column names, and types."""
+    names = selected_databases(databases)
+    connection = connect(database=names[0])
+    try:
+        cursor = connection.cursor()
+        placeholders = ', '.join(['%s'] * len(names))
+        cursor.execute('SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE '
+                       f'FROM information_schema.COLUMNS WHERE TABLE_SCHEMA IN ({placeholders}) '
+                       'ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION', tuple(names))
+        tables = {}  # Group columns under the table they belong to.
+        for database, table, column, data_type in cursor.fetchall():
+            tables.setdefault(f'{database}.{table}', []).append({'name': column, 'type': data_type})
+        return {'database': names[0], 'databases': names, 'tables': tables}
+    finally:
+        connection.close()
+
+
+def validate_sql(sql, databases=None):
     """An AI instruction alone is not enough: parse SQL before execution."""
     try:
         statements = sqlglot.parse(sql, read='mysql')
@@ -83,16 +110,26 @@ def validate_sql(sql):
         name = function.name if isinstance(function, exp.Anonymous) else function.sql_name()
         if name.upper() not in allowed:
             raise ValueError(f'Function {name} is not supported in this mini project.')
-    for table in tree.find_all(exp.Table):
-        if table.catalog or (table.db and table.db != os.getenv('MYSQL_DATABASE', 'sql_mini_project')):
-            raise ValueError('Query only the configured database.')
+    names = databases if databases is not None else [os.getenv('MYSQL_DATABASE', 'sql_mini_project')]
+    if not names or any(name.lower() in SYSTEM_DATABASES for name in names):
+        raise ValueError('Select at least one non-system database.')
+    # Scope resolution distinguishes real tables from CTE and subquery aliases.
+    for scope in traverse_scope(tree):
+        for source in scope.sources.values():
+            if not isinstance(source, exp.Table):
+                continue
+            if source.catalog or (source.db and source.db not in names):
+                raise ValueError('Query only the selected databases.')
+            if not source.db and len(names) > 1:
+                raise ValueError('With multiple databases, use database_name.table_name for each table.')
     return tree.sql(dialect='mysql')
 
 
-def execute_query(sql):
+def execute_query(sql, databases=None):
     """Validate first, then run against the real server in a read-only transaction."""
-    query = validate_sql(sql)
-    connection = connect()
+    query = validate_sql(sql, databases)
+    names = selected_databases(databases)
+    connection = connect(database=names[0])
     try:
         cursor = connection.cursor()
         cursor.execute('SET SESSION MAX_EXECUTION_TIME = 5000')

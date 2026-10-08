@@ -115,13 +115,26 @@ Expected sample result: Priya (33), Rahul (35), Neha (42).
 | `sample_data.sql` | Creates example tables and rows |
 | `.env` | Local database settings and API key |
 
-`GET /schema` returns the configured database's tables and columns.
+`GET /databases` lists accessible non-system databases on this server.
+`GET /schema?databases=sarvesh&databases=student_db` returns selected databases' tables and columns.
 `GET /connection` verifies real read-only execution and schema access.
 `POST /generate-sql` accepts `{"question": "Show users older than 30"}`.
 `POST /execute-query` accepts `{"sql": "SELECT name FROM users"}`.
 
-Unlike the lecture's multi-database explorer, this simple version uses one configured
-database. It also uses fewer dependencies, a Gemini default, and read-only execution.
+Click **Load databases**, select one or more databases, then **Load tables and columns**.
+You can select all listed databases, subject to the schema size limit for AI requests.
+With multiple databases, use qualified table names such as `sarvesh.empp`.
+Cross-database joins require a meaningful relationship and SELECT permission on both tables.
+All databases must be on the same MySQL server; this does not join different servers.
+The `.env` database remains the default when no selection is made.
+Changing the selection clears the previous SQL and results.
+Generation and execution request bodies accept an optional `databases` list:
+
+```json
+{"question": "Show 5 records from sarvesh.empp", "databases": ["sarvesh", "student_db"]}
+```
+
+This version uses fewer dependencies and read-only execution.
 There is no LangChain, vector database, or multi-agent framework to explain.
 
 ## Limits and troubleshooting

@@ -2,6 +2,7 @@
 import pandas as pd
 import requests
 import streamlit as st
+from urllib.parse import urlencode
 
 API_URL = 'http://127.0.0.1:8000'
 st.set_page_config(page_title='AI SQL Generator', layout='centered')
@@ -25,6 +26,14 @@ def call_api(path, payload=None):
 
 st.title('AI SQL Generator')
 st.write('Ask in English, review the SQL, and run it on your MySQL database.')
+
+
+def clear_query():
+    # Old SQL and results belong to the previous database selection.
+    for key in ('sql', 'result', 'schema', 'executed_sql'):
+        st.session_state.pop(key, None)
+
+
 with st.sidebar:
     st.header('Database explorer')
     if st.button('Test database connection'):
@@ -32,17 +41,31 @@ with st.sidebar:
         if connection:
             st.success(f"Connected to {connection['database']}")
             st.caption(f"{connection['table_count']} table(s) visible. Read-only check passed.")
+    if st.button('Load databases'):
+        data = call_api('/databases')
+        if data is not None:
+            st.session_state.available_databases = data['databases']
+            st.session_state.selected_databases = [
+                name for name in st.session_state.get('selected_databases', [])
+                if name in data['databases']]
+            clear_query()
+    available = st.session_state.get('available_databases', [])
+    selected = st.multiselect('Select databases', available,
+                              key='selected_databases', on_change=clear_query)
+    if not selected:
+        st.caption('Load databases, then choose one or more. Until then, the .env database is used.')
     if st.button('Load tables and columns'):
-        st.session_state.schema = call_api('/schema')
+        params = '?' + urlencode({'databases': selected}, doseq=True) if selected else ''
+        st.session_state.schema = call_api('/schema' + params)
     schema = st.session_state.get('schema')
     if schema:
-        st.caption('Database: ' + schema['database'])
+        st.caption('Databases: ' + ', '.join(schema.get('databases', [schema['database']])))
         if not schema['tables']:
             st.info('No tables are visible. Check the database and account permissions.')
         for table, columns in schema['tables'].items():
             with st.expander(table):
                 st.dataframe(columns, hide_index=True)
-    st.caption('Uses the database configured in .env.')
+    st.caption('Selected databases must be on this MySQL server. System databases are excluded.')
 
 with st.form('question_form'):
     # A form waits for Generate SQL instead of calling the API on every edit.
@@ -55,7 +78,7 @@ if generate:
         st.warning('Please enter a question.')
     else:
         with st.spinner('Generating SQL…'):
-            data = call_api('/generate-sql', {'question': question})
+            data = call_api('/generate-sql', {'question': question, 'databases': selected or None})
         if data:
             st.session_state.sql = data['sql']
 
@@ -64,7 +87,7 @@ st.caption('Edit the SQL or enter your own SELECT query without an AI key.')
 sql = st.text_area('SQL query', key='sql', height=150)
 if st.button('Run query', disabled=not sql.strip()):
     with st.spinner('Running query…'):
-        st.session_state.result = call_api('/execute-query', {'sql': sql})
+        st.session_state.result = call_api('/execute-query', {'sql': sql, 'databases': selected or None})
         st.session_state.executed_sql = sql
 result = st.session_state.get('result')
 if result:

@@ -93,21 +93,28 @@ by the time this function is called after importing the module.
 
 ### get_schema()
 
+`list_databases()` runs `SHOW DATABASES` on a connection without a default database.
+It excludes MySQL system schemas. `selected_databases()` removes duplicate selections
+and checks they are available to the account. The .env database is used when no list is supplied.
+`connect(database=...)` opens the first selected database for execution; `server_only=True`
+is used for listing. This avoids needing to change .env to switch databases.
+
 1. Open a connection and create a cursor.
 2. Query `information_schema.COLUMNS`, MySQL's table/column metadata catalog.
-3. `WHERE TABLE_SCHEMA = DATABASE()` restricts results to the configured database.
+3. `WHERE TABLE_SCHEMA IN (%s, ...)` selects metadata for the chosen databases.
+   Database names are passed separately as parameters, not inserted into SQL text.
 4. Sort by table and column position so the explorer is easier to read.
 5. `fetchall()` retrieves the metadata rows. These are descriptions, not business records.
 6. The loop unpacks each metadata row into `table`, `column`, and `data_type`.
-7. `setdefault(table, [])` creates an empty list the first time a table is encountered.
+7. `setdefault(database + '.' + table, [])` keeps identically named tables in different databases separate.
 8. `.append(...)` adds that column's description to its table's list.
-9. Return a dictionary containing the database name and grouped tables.
+9. Return the first database name, the complete selection list, and grouped tables.
 
 `try ... finally` guarantees the connection is closed whether the operation succeeds
 or fails. Example response shape, using illustrative names:
 
 ```json
-{"database": "college", "tables": {"students": [{"name": "age", "type": "int"}]}}
+{"database": "college", "databases": ["college"], "tables": {"college.students": [{"name": "age", "type": "int"}]}}
 ```
 
 ### validate_sql(sql)
@@ -121,7 +128,9 @@ Invalid syntax raises a readable `ValueError`.
 The code requires exactly one statement and a SELECT at the top. `tree.walk()` visits
 its parts and rejects write operations, output-file statements, and locking clauses.
 `tree.find_all(exp.Func)` examines functions; only the listed common functions are allowed.
-`tree.find_all(exp.Table)` rejects references to a different named database/catalog.
+`traverse_scope(tree)` distinguishes real tables from CTE/subquery aliases.
+Real tables must belong to the selection. With multiple selected databases, physical
+tables must have a database qualifier; unqualified CTE references remain allowed.
 Finally, `tree.sql(dialect='mysql')` converts the accepted tree back to SQL text.
 
 This deliberately supports a subset of SQL. It does not prove the query answers the
@@ -205,14 +214,19 @@ The two exception handlers convert `ValueError` or database failures into HTTP 4
 responses with a `detail` message. They are `async` handlers; the database/API work in
 normal `def` endpoints remains synchronous, handled by FastAPI's execution machinery.
 
-### Four routes
+### Five routes
 
 | Route | Function and result |
 |---|---|
 | `GET /connection` | Calls `check_connection()` and returns real connection status |
+| `GET /databases` | Lists visible non-system databases on the connected server |
 | `GET /schema` | Calls `get_schema()` and returns real table/column metadata |
 | `POST /generate-sql` | Checks question, loads fresh schema, rejects empty schema, calls AI, returns SQL |
 | `POST /execute-query` | Passes SQL to `execute_query()` and returns columns, rows, and truncation flag |
+
+Schema requests accept repeated `databases` query parameters. Both POST request models
+accept a `databases` list. The selection is passed per request, not saved as a global
+backend variable, so different UI sessions do not overwrite each other's selection.
 
 Returning a Python dictionary allows FastAPI to create a JSON response.
 FastAPI also creates the interactive `/docs` page for trying these routes.
@@ -246,6 +260,11 @@ error message for unsuccessful requests, and returns either data or `None`.
 Network failures or invalid JSON show a local API connection message.
 
 ### Sidebar
+
+**Load databases** fills a simple `st.multiselect`. The selected list travels with each
+generation/execution request. `urlencode(..., doseq=True)` safely builds repeated schema
+query parameters. `clear_query()` removes stale schema, SQL, and results after selection
+changes. An empty selection falls back to the .env database, as indicated in the sidebar.
 
 **Test database connection** calls `/connection` and shows the real configured database
 and visible table count. **Load tables and columns** calls `/schema` and saves it in

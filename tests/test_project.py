@@ -12,6 +12,59 @@ from app import app
 
 
 class ProjectTests(unittest.TestCase):
+    def test_cross_database_validation(self):
+        sql = 'SELECT a.id FROM college.students a JOIN office.staff b ON a.id=b.id'
+        self.assertIn('office.staff', database.validate_sql(sql, ['college', 'office']))
+        with self.assertRaises(ValueError):
+            database.validate_sql(sql, ['college'])
+        with self.assertRaises(ValueError):
+            database.validate_sql('SELECT * FROM students', ['college', 'office'])
+        with self.assertRaises(ValueError):
+            database.validate_sql('SELECT * FROM mysql.user', ['college', 'office'])
+        self.assertIn('SELECT', database.validate_sql(
+            'WITH s AS (SELECT id FROM college.students) SELECT * FROM s', ['college', 'office']))
+
+    @patch('database.list_databases', return_value=['college', 'office'])
+    @patch('database.connect')
+    def test_multiple_schema_keeps_duplicate_table_names(self, connect, listing):
+        cursor = connect.return_value.cursor.return_value
+        cursor.fetchall.return_value = [('college', 'users', 'id', 'int'),
+                                       ('office', 'users', 'name', 'varchar')]
+        schema = database.get_schema(['college', 'office'])
+        self.assertEqual(set(schema['tables']), {'college.users', 'office.users'})
+        self.assertEqual(cursor.execute.call_args.args[1], ('college', 'office'))
+        with self.assertRaises(ValueError):
+            database.get_schema(['unavailable'])
+
+    @patch('database.list_databases', return_value=['college', 'office'])
+    @patch('database.connect')
+    def test_execute_uses_selected_database(self, connect, listing):
+        cursor = connect.return_value.cursor.return_value
+        cursor.description = [('id',)]
+        cursor.fetchmany.return_value = []
+        database.execute_query('SELECT id FROM users', ['office'])
+        connect.assert_called_once_with(database='office')
+
+    def test_api_passes_database_selection(self):
+        client = TestClient(app)
+        with patch('app.get_schema', return_value={'tables': {'office.users': []}}) as schema:
+            client.get('/schema', params=[('databases', 'college'), ('databases', 'office')])
+            schema.assert_called_once_with(['college', 'office'])
+        with patch('app.execute_query', return_value={'rows': []}) as execute:
+            client.post('/execute-query', json={'sql': 'SELECT 1', 'databases': ['office']})
+            execute.assert_called_once_with('SELECT 1', ['office'])
+
+    @patch('requests.get')
+    def test_ui_selection_clears_old_results(self, get):
+        get.return_value.ok = True
+        get.return_value.json.return_value = {'databases': ['college', 'office']}
+        ui = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'ui.py')).run(timeout=15)
+        next(b for b in ui.button if b.label == 'Load databases').click().run()
+        ui.text_area[1].set_value('SELECT 1').run()
+        ui.multiselect[0].set_value(['college', 'office']).run()
+        self.assertEqual(ui.text_area[1].value, '')
+        self.assertEqual(len(ui.exception), 0)
+
     def test_select_and_join(self):
         query = 'SELECT u.name, SUM(o.amount) FROM users u JOIN orders o ON u.id=o.user_id GROUP BY u.name'
         self.assertIn('SELECT', database.validate_sql(query))
